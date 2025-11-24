@@ -13,6 +13,7 @@ import kernitus.plugin.OldCombatMechanics.utilities.damage.OCMEntityDamageByEnti
 import kernitus.plugin.OldCombatMechanics.utilities.damage.WeaponDamages;
 import org.bukkit.Material;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.ItemStack;
@@ -42,6 +43,8 @@ public class ModuleOldToolDamage extends OCMModule {
     public void onEntityDamaged(OCMEntityDamageByEntityEvent event) {
         final Entity damager = event.getDamager();
         if (event.getCause() == EntityDamageEvent.DamageCause.THORNS) return;
+
+        if (event.getDamagee() instanceof Player) return;
 
         if (!isEnabled(damager, event.getDamagee())) return;
 

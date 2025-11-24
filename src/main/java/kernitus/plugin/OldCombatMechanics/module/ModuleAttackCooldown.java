@@ -13,6 +13,7 @@ import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -46,6 +47,19 @@ public class ModuleAttackCooldown extends OCMModule {
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerQuit(PlayerQuitEvent e) {
         setAttackSpeed(e.getPlayer(), NEW_ATTACK_SPEED);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onDamageEntity(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Player player)) return;
+
+        if (event.getEntity() instanceof Player) {
+            setAttackSpeed(player, NEW_ATTACK_SPEED);
+            return;
+        }
+
+
+        setAttackSpeed(player, module().getDouble("generic-attack-speed"));
     }
 
     /**
