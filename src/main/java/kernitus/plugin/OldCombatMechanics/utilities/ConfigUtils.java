@@ -5,8 +5,9 @@
  */
 package kernitus.plugin.OldCombatMechanics.utilities;
 
+import com.cryptomorin.xseries.XMaterial;
 import kernitus.plugin.OldCombatMechanics.utilities.potions.PotionDurations;
-import kernitus.plugin.OldCombatMechanics.utilities.potions.PotionTypeCompat;
+import kernitus.plugin.OldCombatMechanics.utilities.potions.PotionKey;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 
@@ -21,6 +22,9 @@ import java.util.stream.Collectors;
  * @see org.bukkit.configuration.ConfigurationSection
  */
 public class ConfigUtils {
+    private static final Set<String> warnedUnknownPotionDurationKeys = Collections.synchronizedSet(new HashSet<>());
+    private static final Set<String> warnedUnknownMaterialListKeys = Collections.synchronizedSet(new HashSet<>());
+    private static final Set<String> warnedUnknownMaterialMapKeys = Collections.synchronizedSet(new HashSet<>());
 
     /**
      * Safely loads all doubles from a configuration section, reading both double and integer values.
@@ -37,6 +41,35 @@ public class ConfigUtils {
     }
 
     /**
+     * Loads a material-to-double map from a configuration section.
+     * Safely ignores non-matching materials.
+     *
+     * @param section The section from which to load the values.
+     * @return The loaded material map.
+     */
+    public static Map<Material, Double> loadMaterialDoubleMap(ConfigurationSection section) {
+        Objects.requireNonNull(section, "section cannot be null!");
+
+        final String fullKey = section.getCurrentPath() == null ? "" : section.getCurrentPath();
+
+        return section.getKeys(false).stream()
+                .filter(((Predicate<String>) section::isDouble).or(section::isInt))
+                .map(key -> {
+                    Material material = matchMaterial(key);
+                    if (material == null && isUnknownMaterialKey(key)) {
+                        warnUnknownMaterialMap(fullKey, key);
+                        return null;
+                    }
+                    if (material == null) {
+                        return null;
+                    }
+                    return new AbstractMap.SimpleImmutableEntry<>(material, section.getDouble(key));
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (left, right) -> right));
+    }
+
+    /**
      * Loads the list of {@link Material Materials} with the given key from a configuration section.
      * Safely ignores non-matching materials.
      *
@@ -50,39 +83,76 @@ public class ConfigUtils {
 
         if (!section.isList(key)) return new ArrayList<>();
 
+        final String basePath = section.getCurrentPath();
+        final String fullKey = basePath == null || basePath.isEmpty() ? key : basePath + "." + key;
+
         return section.getStringList(key).stream()
-                .map(Material::matchMaterial)
+                .map(String::trim)
+                .map(name -> {
+                    Material material = matchMaterial(name);
+                    if (material == null && isUnknownMaterialKey(name)) {
+                        warnUnknownMaterial(fullKey, name);
+                        return null;
+                    }
+                    return material;
+                })
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
     }
 
+    private static void warnUnknownMaterial(String fullKey, String name) {
+        final String warnKey = fullKey + ":" + name.toUpperCase(Locale.ROOT);
+        if (warnedUnknownMaterialListKeys.add(warnKey)) {
+            Messenger.warn("Unknown material '%s' in config list '%s'; skipping", name, fullKey);
+        }
+    }
+
+    private static void warnUnknownMaterialMap(String fullKey, String name) {
+        final String warnKey = fullKey + ":" + name.toUpperCase(Locale.ROOT);
+        if (warnedUnknownMaterialMapKeys.add(warnKey)) {
+            Messenger.warn("Unknown material '%s' in config section '%s'; skipping", name, fullKey);
+        }
+    }
+
+    private static Material matchMaterial(String name) {
+        Optional<XMaterial> match = XMaterial.matchXMaterial(name);
+        if (match.isPresent()) {
+            return match.get().parseMaterial();
+        }
+
+        return Material.matchMaterial(name);
+    }
+
+    private static boolean isUnknownMaterialKey(String name) {
+        return !XMaterial.matchXMaterial(name).isPresent() && Material.matchMaterial(name) == null;
+    }
+
     /**
      * Gets potion duration values from config for all configured potion types.
-     * Will create map of new potion type name to durations.
+     * Will create map of potion keys to durations.
      *
      * @param section The section from which to load the duration values
      * @return HashMap of {@link String} and {@link PotionDurations}
      */
-    public static HashMap<PotionTypeCompat, PotionDurations> loadPotionDurationsList(ConfigurationSection section) {
+    public static HashMap<PotionKey, PotionDurations> loadPotionDurationsList(ConfigurationSection section) {
         Objects.requireNonNull(section, "potion durations section cannot be null!");
 
-        final HashMap<PotionTypeCompat, PotionDurations> durationsHashMap = new HashMap<>();
+        final HashMap<PotionKey, PotionDurations> durationsHashMap = new HashMap<>();
         final ConfigurationSection durationsSection = section.getConfigurationSection("potion-durations");
 
         final ConfigurationSection drinkableSection = durationsSection.getConfigurationSection("drinkable");
         final ConfigurationSection splashSection = durationsSection.getConfigurationSection("splash");
 
         for (String newPotionTypeName : drinkableSection.getKeys(false)) {
-            try {
-                // Get durations in seconds and convert to ticks
-                final int drinkableDuration = drinkableSection.getInt(newPotionTypeName) * 20;
-                final int splashDuration = splashSection.getInt(newPotionTypeName) * 20;
-                final PotionTypeCompat potionTypeCompat = new PotionTypeCompat(newPotionTypeName);
+            // Get durations in seconds and convert to ticks
+            final int drinkableDuration = drinkableSection.getInt(newPotionTypeName) * 20;
+            final int splashDuration = splashSection.getInt(newPotionTypeName) * 20;
 
-                durationsHashMap.put(potionTypeCompat, new PotionDurations(drinkableDuration, splashDuration));
-            } catch (IllegalArgumentException e) {
-                // In case the potion doesn't exist in the version running on the server
-                Messenger.debug("Skipping loading " + newPotionTypeName + " potion");
+            Optional<PotionKey> potionKey = PotionKey.fromConfigKey(newPotionTypeName);
+            if (potionKey.isPresent()) {
+                durationsHashMap.put(potionKey.get(), new PotionDurations(drinkableDuration, splashDuration));
+            } else if (warnedUnknownPotionDurationKeys.add(newPotionTypeName)) {
+                Messenger.warn("Unknown potion type '%s' in old-potion-effects.potion-durations; skipping", newPotionTypeName);
             }
         }
 
